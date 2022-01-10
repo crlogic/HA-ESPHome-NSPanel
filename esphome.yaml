@@ -1,0 +1,684 @@
+# Set some variables for convenience
+substitutions:
+  node_name: nspanel
+  device_name: NSPanel
+
+# Note: this may not be needed if the pull request has been merged.
+# Check https://github.com/esphome/esphome/pull/2956 for current status.
+external_components:
+  - source: github://pr#2956
+    components: [nextion]
+    refresh: 12h
+
+globals:
+  - id: nextion_page_id
+    type: int
+    restore_value: no
+    initial_value: '0'
+
+script:
+  - id: update_grid
+    then:
+      - lambda: |-      
+          if (id(livingroom_bright_white).state) {
+            id(disp1).set_component_value("bright",1);
+          } else {
+            id(disp1).set_component_value("bright",0);
+          }
+    
+          if (id(livingroom_white_group).state) {
+            id(disp1).set_component_value("page0.ambient",1);
+          } else {
+            id(disp1).set_component_value("page0.ambient",0);
+          }
+    
+          if (id(movie_lighting).state) {
+            id(disp1).set_component_value("movie",1);
+            id(disp1).send_command_printf("page0.bco=%i", 32784);
+          } else {
+            id(disp1).set_component_value("movie",0);
+            id(disp1).send_command_printf("page0.bco=%i", 4226);
+          }
+    
+          if (id(surroundsswitch).state) {
+            id(disp1).set_component_value("surrounds",1);
+          } else {
+            id(disp1).set_component_value("surrounds",0);
+          }
+    
+          if (id(shelly1pmpatio).state) {
+            id(disp1).set_component_value("patio",1);
+          } else {
+            id(disp1).set_component_value("patio",0);
+          }
+    
+          if (id(shelly1pmpatio).state) {
+            id(disp1).set_component_value("patio",1);
+          } else {
+            id(disp1).set_component_value("patio",0);
+          }
+    
+          if (id(deskswitch).state) {
+            id(disp1).set_component_value("desk",1);
+          } else {
+            id(disp1).set_component_value("desk",0);
+          }
+    
+          if (id(tvswitch).state) {
+            id(disp1).set_component_value("tvplug",1);
+          } else {
+            id(disp1).set_component_value("tvplug",0);
+          }
+    
+          if (id(bedroomatombulb).state) {
+            id(disp1).set_component_value("bedlight",1);
+          } else {
+            id(disp1).set_component_value("bedlight",0);
+          }
+    
+          if (id(shellyrgbw2ben).state) {
+            id(disp1).set_component_value("benlight",1);
+          } else {
+            id(disp1).set_component_value("benlight",0);
+          }
+      - component.update: disp1
+      
+esphome:
+  name: $node_name
+  comment: $device_name
+  on_boot:
+    priority: -100
+    then:
+        # the following is needed for button state update from HA API
+      - wait_until: 
+          api.connected:
+      - delay: 6s
+      - script.execute: update_grid
+      - logger.log: "Refresh triggered from esphome on_boot sensor"
+
+esp32:
+  board: esp32dev
+
+wifi:
+  ssid: "yadda"
+  password: "yadda"
+
+# Enable logging
+logger:
+  logs:
+    sensor: ERROR
+    binary_sensor: ERROR
+    api: ERROR
+
+# Enable wireless updates
+ota:
+
+# Enable Home Assistant API
+api:
+  services:
+    # Service to play a song
+    - service: upload_tft
+      then:
+        - lambda: 'id(disp1)->upload_tft();'
+    - service: set_nextion_sensor
+      variables:
+        nextion_type: int
+        name: string
+        state: float
+      then:
+        - lambda: |-
+            id(disp1).set_nextion_sensor_state(nextion_type,name,state);
+    - service: set_nextion_text
+      variables:
+        name: string
+        state: string
+      then:
+        - lambda: |-
+            id(disp1).set_nextion_text_state(name,state);            
+
+# A reboot button is always useful
+button:
+  - platform: restart
+    name: Restart $device_name
+
+# Define some inputs
+binary_sensor:
+  - platform: gpio
+    name: $device_name Left Button
+    pin:
+      number: 14
+      inverted: true
+    on_click:
+      - switch.toggle: relay_1
+
+    # found a use for the second button
+  - platform: gpio
+    name: $device_name Right Button
+    pin:
+      number: 27
+      inverted: true
+    on_click:
+      then:
+        - if:
+            condition:
+              lambda: 'return id(relay_2).state;'
+            then:
+              - number.set:
+                  id: brightness
+                  value: 20
+            else:
+              - number.set:
+                  id: brightness
+                  value: 0
+        - switch.toggle: relay_2
+
+    # refresh states based on page change
+  - platform: nextion
+    name: $device_name page1_goto_grid
+    id: page1_goto_grid
+    page_id: 1
+    component_id: 15
+    internal: true
+    on_press:
+      then:
+        - delay: 1s
+        - script.execute: update_grid 
+        - logger.log: "Refresh triggered from page1_goto_grid sensor"
+        
+  - platform: nextion
+    name: $device_name page2_goto_grid
+    id: page2_goto_grid
+    page_id: 2
+    component_id: 1
+    internal: true
+    on_press:
+      then:
+        - delay: 1s
+        - script.execute: update_grid 
+        - logger.log: "Refresh triggered from page2_goto_grid sensor"
+        
+  - platform: nextion
+    name: $device_name Bright
+    id: bright
+    page_id: 0
+    component_id: 1
+    internal: true
+    on_press:
+      then:
+        if:
+          condition:
+            lambda: 'return id(livingroom_bright_white).state;'
+          then:
+            - homeassistant.service:
+                service: light.turn_off
+                data:
+                  entity_id: light.livingroom_bright_white
+            - component.update: disp1
+          else:
+            - homeassistant.service:
+                service: light.turn_on
+                data:
+                  entity_id: light.livingroom_bright_white
+            - component.update: disp1
+
+  - platform: nextion
+    name: $device_name Desk
+    id: desk
+    page_id: 0
+    component_id: 2
+    internal: true
+    on_click:
+    - min_length: 1000ms
+      max_length: 3000ms
+      then:
+        if:
+          condition:
+            lambda: 'return id(deskswitch).state;'
+          then:
+            - homeassistant.service:
+                service: homeassistant.turn_off
+                data:
+                  entity_id: switch.tasmota
+            - component.update: disp1
+          else:
+            - homeassistant.service:
+                service: homeassistant.turn_on
+                data:
+                  entity_id: switch.tasmota
+            - component.update: disp1
+
+  - platform: nextion
+    name: $device_name Bedlight
+    id: bedlight
+    page_id: 0
+    component_id: 3
+    internal: true
+    on_press:
+      then:
+        if:
+          condition:
+            lambda: 'return id(bedroomatombulb).state;'
+          then:
+            - homeassistant.service:
+                service: light.turn_off
+                data:
+                  entity_id: light.bedroom_atom_bulb
+            - component.update: disp1
+          else:
+            - homeassistant.service:
+                service: light.turn_on
+                data:
+                  entity_id: light.bedroom_atom_bulb
+            - component.update: disp1     
+
+  - platform: nextion
+    name: $device_name Ambient
+    id: ambient
+    page_id: 0
+    component_id: 4
+    internal: true
+    on_press:
+      then:
+        if:
+          condition:
+            lambda: 'return id(livingroom_white_group).state;'
+          then:
+            - homeassistant.service:
+                service: light.turn_off
+                data:
+                  entity_id: light.livingroom_white_group
+            - component.update: disp1
+          else:
+            - homeassistant.service:
+                service: light.turn_on
+                data:
+                  entity_id: light.livingroom_white_group
+            - component.update: disp1    
+    
+  - platform: nextion
+    name: $device_name tvplug
+    id: tvplug
+    page_id: 0
+    component_id: 5
+    internal: true
+    on_click:
+    - min_length: 1000ms
+      max_length: 3000ms
+      then:
+        if:
+          condition:
+            lambda: 'return id(tvswitch).state;'
+          then:
+            - homeassistant.service:
+                service: homeassistant.turn_off
+                data:
+                  entity_id: switch.tvplug
+            - component.update: disp1
+          else:
+            - homeassistant.service:
+                service: homeassistant.turn_on
+                data:
+                  entity_id: switch.tvplug
+            - component.update: disp1    
+    
+  - platform: nextion
+    name: $device_name benlight
+    id: benlight
+    page_id: 0
+    component_id: 6
+    internal: true
+    on_press:
+      then:
+        if:
+          condition:
+            lambda: 'return id(shellyrgbw2ben).state;'
+          then:
+            - homeassistant.service:
+                service: light.turn_off
+                data:
+                  entity_id: light.shellyrgbw2_ben
+            - component.update: disp1
+          else:
+            - homeassistant.service:
+                service: light.turn_on
+                data:
+                  entity_id: light.shellyrgbw2_ben
+            - component.update: disp1 
+    
+  - platform: nextion
+    name: $device_name Movie
+    id: movie
+    page_id: 0
+    component_id: 7
+    internal: true
+    on_press:
+      then:
+        if:
+          condition:
+            lambda: 'return id(movie_lighting).state;'
+          then:
+            - homeassistant.service:
+                service: light.turn_off
+                data:
+                  entity_id: light.movie_lighting
+            - component.update: disp1
+          else:
+            - homeassistant.service:
+                service: light.turn_on
+                data:
+                  entity_id: light.movie_lighting
+            - component.update: disp1     
+
+  - platform: nextion
+    name: $device_name Surrounds
+    id: surrounds
+    page_id: 0
+    component_id: 8
+    internal: true
+    on_press:
+      then:
+        if:
+          condition:
+            lambda: 'return id(surroundsswitch).state;'
+          then:
+            - homeassistant.service:
+                service: homeassistant.turn_off
+                data:
+                  entity_id: switch.tasmota_2 
+            - component.update: disp1
+          else:
+            - homeassistant.service:
+                service: homeassistant.turn_on
+                data:
+                  entity_id: switch.tasmota_2 
+            - component.update: disp1      
+    
+  - platform: nextion
+    name: $device_name Patio
+    id: patio
+    page_id: 0
+    component_id: 9
+    internal: true
+    on_press:
+      then:
+        if:
+          condition:
+            lambda: 'return id(shelly1pmpatio).state;'
+          then:
+            - homeassistant.service:
+                service: homeassistant.turn_off
+                data:
+                  entity_id: switch.shelly1pm_patio
+            - component.update: disp1
+          else:
+            - homeassistant.service:
+                service: homeassistant.turn_on
+                data:
+                  entity_id: switch.shelly1pm_patio
+            - component.update: disp1   
+
+  - platform: homeassistant
+    id: livingroom_bright_white
+    entity_id: light.livingroom_bright_white
+    on_state:
+       then:
+          - lambda: |- 
+                  if (id(livingroom_bright_white).state) {
+                    id(disp1).set_component_value("bright",1);
+                  } else {
+                    id(disp1).set_component_value("bright",0);
+                  }
+          - component.update: disp1
+  
+  - platform: homeassistant
+    id: livingroom_white_group
+    entity_id: light.livingroom_white_group
+    on_state:
+       then:
+          - lambda: |- 
+                  if (id(livingroom_white_group).state) {
+                    id(disp1).set_component_value("page0.ambient",1);
+                  } else {
+                    id(disp1).set_component_value("page0.ambient",0);
+                  }
+          - component.update: disp1        
+          
+  - platform: homeassistant
+    id: movie_lighting
+    entity_id: light.movie_lighting
+    on_state:
+       then:
+          - lambda: |- 
+                  if (id(movie_lighting).state) {
+                    id(disp1).set_component_value("movie",1);
+                    id(disp1).send_command_printf("page0.bco=%i", 32784);
+                  } else {
+                    id(disp1).set_component_value("movie",0);
+                    id(disp1).send_command_printf("page0.bco=%i", 4226);
+                  }
+          - component.update: disp1  
+          - if:
+              condition:
+                lambda: 'return id(movie_lighting).state;'
+              then:
+                - number.set:
+                    id: brightness
+                    value: 2
+              else:
+                - number.set:
+                    id: brightness
+                    value: 20          
+          
+  - platform: homeassistant
+    id: surroundsswitch
+    entity_id: switch.tasmota_2  
+    on_state:
+       then:
+          - lambda: |- 
+                  if (id(surroundsswitch).state) {
+                    id(disp1).set_component_value("surrounds",1);
+                  } else {
+                    id(disp1).set_component_value("surrounds",0);
+                  }
+          - component.update: disp1
+          
+  - platform: homeassistant
+    id: shelly1pmpatio
+    entity_id: switch.shelly1pm_patio
+    on_state:
+       then:
+          - lambda: |- 
+                  if (id(shelly1pmpatio).state) {
+                    id(disp1).set_component_value("patio",1);
+                  } else {
+                    id(disp1).set_component_value("patio",0);
+                  }
+          - component.update: disp1          
+
+  - platform: homeassistant
+    id: deskswitch
+    entity_id: switch.tasmota
+    on_state:
+       then:
+          - lambda: |- 
+                  if (id(deskswitch).state) {
+                    id(disp1).set_component_value("desk",1);
+                  } else {
+                    id(disp1).set_component_value("desk",0);
+                  }
+          - component.update: disp1 
+          
+  - platform: homeassistant
+    id: tvswitch
+    entity_id: switch.tvplug
+    on_state:
+       then:
+          - lambda: |- 
+                  if (id(tvswitch).state) {
+                    id(disp1).set_component_value("tvplug",1);
+                  } else {
+                    id(disp1).set_component_value("tvplug",0);
+                  }
+          - component.update: disp1   
+
+  - platform: homeassistant
+    id: bedroomatombulb
+    entity_id: light.bedroom_atom_bulb
+    on_state:
+       then:
+          - lambda: |- 
+                  if (id(bedroomatombulb).state) {
+                    id(disp1).set_component_value("bedlight",1);
+                  } else {
+                    id(disp1).set_component_value("bedlight",0);
+                  }
+          - component.update: disp1      
+
+  - platform: homeassistant
+    id: shellyrgbw2ben
+    entity_id: light.shellyrgbw2_ben
+    on_state:
+       then:
+          - lambda: |- 
+                  if (id(shellyrgbw2ben).state) {
+                    id(disp1).set_component_value("benlight",1);
+                  } else {
+                    id(disp1).set_component_value("benlight",0);
+                  }
+          - component.update: disp1            
+
+text_sensor:
+  - platform: homeassistant
+    id: hvacsetting
+    entity_id: input_select.hvac
+    on_value:
+      then:
+        - lambda: 'id(disp1).set_component_text_printf("hvac", " HVAC mode: %s", id(hvacsetting).state.c_str());'
+
+sensor:
+  # - platform: wifi_signal
+  #   name: $device_name WiFi Signal
+  #   update_interval: 60s
+
+  # - platform: ntc
+  #   id: temperature
+  #   sensor: resistance_sensor
+  #   calibration:
+  #     b_constant: 3950
+  #     reference_temperature: 25°C
+  #     reference_resistance: 10kOhm
+  #   name: $device_name Temperature
+
+  # - platform: resistance
+  #   id: resistance_sensor
+  #   sensor: ntc_source
+  #   configuration: DOWNSTREAM
+  #   resistor: 11.2kOhm
+
+  # - platform: adc
+  #   id: ntc_source
+  #   pin: 38
+  #   update_interval: 10s
+  #   attenuation: 11db
+
+  # Grab current temperature from Home Assistant
+  - platform: homeassistant
+    id: co2ppm
+    entity_id: sensor.co2
+    on_value:
+      # Push it to the display
+      then:
+        - lambda: 'id(disp1).set_component_text_printf("co2", " CO2: %.1f ppm", x);'
+
+  # - platform: nextion
+  #   id: wave0
+  #   component_id: 13
+  #   wave_channel_id: 0
+  #   wave_max_value: 1024
+  #   wave_max_length: 305
+  #   update_interval: 15s
+
+
+# Define some outputs
+switch:
+  # The two relays
+  - platform: gpio
+    name: $device_name Relay 1
+    id: relay_1
+    pin:
+      number: 22
+    restore_mode: ALWAYS_OFF
+  - platform: gpio
+    name: $device_name Relay 2
+    id: relay_2
+    pin:
+      number: 19
+
+  # Pin 4 always needs to be on to power up the display
+  - platform: gpio
+    id: screen_power
+    entity_category: config
+    pin:
+      number: 4
+      inverted: true
+    restore_mode: ALWAYS_ON
+
+number:
+  platform: template
+  name: $device_name Brightness
+  id: brightness
+  entity_category: config
+  unit_of_measurement: '%'
+  min_value: 0
+  max_value: 100
+  step: 1
+  initial_value: 20
+  set_action:
+    then:
+      - lambda: 'id(disp1).set_backlight_brightness(x/100);'
+
+# Configure the internal bleeper
+# output:
+#   - platform: ledc
+#     id: buzzer_out
+#     pin:
+#       number: 21
+
+# Enable ringtone music support
+# rtttl:
+#   id: buzzer
+#   output: buzzer_out
+
+# Configure UART for communicating with the screen
+uart:
+  id: tf_uart
+  tx_pin: 16
+  rx_pin: 17
+  baud_rate: 115200
+
+# Configure the screen itself
+display:
+  - platform: nextion
+    id: disp1
+    uart_id: tf_uart
+    tft_url: http://192.168.0.96:8123/local/NSPanelGUIPages.tft
+    # A little fun...
+    on_setup:
+      then:
+        - number.set:
+            id: brightness
+            value: 20
+        - lambda: |-
+            id(disp1).set_component_text_printf(
+              "co2", " CO2: %.1f ppm", id(co2ppm).state
+            );  
+        - lambda: |-
+            id(disp1).set_component_text_printf(
+              "hvac", " HVAC mode: %s", id(hvacsetting).state.c_str()
+            );              
+        - lambda: |-
+            id(disp1).update_all_components();
+            id(disp1).update();
+        # this is needed for tft updates, triggers too early on boot        
+        - script.execute: update_grid
+        - logger.log: "Refresh triggered from display on_setup sensor"
